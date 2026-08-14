@@ -5,12 +5,18 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
 HAS_APPINDICATOR = False
+# Ubuntu 22.10+ 只提供 AyatanaAppIndicator3，旧系统仍是 AppIndicator3，两者 API 相同
 try:
-    gi.require_version('AppIndicator3', '0.1')
-    from gi.repository import AppIndicator3
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
     HAS_APPINDICATOR = True
 except Exception:
-    pass
+    try:
+        gi.require_version('AppIndicator3', '0.1')
+        from gi.repository import AppIndicator3
+        HAS_APPINDICATOR = True
+    except Exception:
+        pass
 
 
 class TrayIcon:

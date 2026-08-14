@@ -41,11 +41,13 @@ class PinWin(Gtk.Window):
         self.set_skip_taskbar_hint(True)
 
         # 初始缩放
+        # GTK3 Wayland 下 get_geometry() 返回物理像素，需除以 scale_factor 得到逻辑尺寸
         mon = (self.get_display().get_primary_monitor()
                or self.get_display().get_monitor_at_point(0, 0))
         g = mon.get_geometry()
+        sf = float(mon.get_scale_factor() or 1)
         if hasattr(g, 'width'):
-            gw, gh = g.width, g.height
+            gw, gh = g.width / sf, g.height / sf
         else:
             gw, gh = 1920, 1080
         init_sc = settings.get("initial_scale", 0.6)
@@ -79,6 +81,8 @@ class PinWin(Gtk.Window):
         vbox.pack_start(self.darea, False, False, 0)
 
         self.connect("destroy", lambda _: on_close(self) if on_close else None)
+        # Esc 关闭当前贴图（修复：原 Esc 绑在隐藏的主窗口上，贴图收不到）
+        self.connect("key-press-event", self._on_key)
         vbox.pack_end(bar, False, False, 0)
 
         # 居中
@@ -86,7 +90,9 @@ class PinWin(Gtk.Window):
         x = gx + (gw - self._disp_w) // 2
         y = (gh - self._disp_h - 40) // 2
         self.move(max(0, x), max(0, y))
+        self._refresh_img()  # 统一初始窗口尺寸
         self.show_all()
+        self.present()  # 抢焦点，让 Esc / 滚轮立即响应
 
     def _build_toolbar(self):
         self._bar = Gtk.Box(spacing=3)
@@ -96,70 +102,71 @@ class PinWin(Gtk.Window):
         self._bar.set_margin_bottom(4)
         bar = self._bar
 
-        # ── 现代化 CSS ──
+        # ── 现代化 CSS（Snipaste 风格深色工具栏）──
         self._bar_css = Gtk.CssProvider()
         self._bar_css.load_from_data(b"""
             .snip-bar {
-                background: rgba(250, 250, 250, 0.95);
-                border-top: 1px solid rgba(0,0,0,0.1);
-                padding: 4px 6px;
+                background: rgba(28, 28, 33, 0.92);
+                border-top: 1px solid rgba(255, 255, 255, 0.07);
+                padding: 4px 8px;
             }
             .snip-bar button {
-                color: #333;
+                color: #e8e8ec;
                 font-size: 13px;
                 min-width: 26px;
                 min-height: 26px;
                 padding: 3px 6px;
-                border-radius: 6px;
+                border-radius: 7px;
                 border: 1px solid transparent;
                 background: transparent;
             }
             .snip-bar button:hover {
-                background: rgba(0,0,0,0.06);
-                border-color: rgba(0,0,0,0.08);
+                background: rgba(255, 255, 255, 0.10);
+                border-color: rgba(255, 255, 255, 0.07);
             }
             .snip-bar button:active {
-                background: rgba(0,0,0,0.1);
+                background: rgba(255, 255, 255, 0.16);
             }
             .tool-active {
-                background: rgba(74, 144, 226, 0.15);
-                border-color: rgba(74, 144, 226, 0.4);
-                color: #4a90e2;
+                background: rgba(80, 150, 255, 0.26);
+                border-color: rgba(130, 185, 255, 0.5);
+                color: #ffffff;
             }
             .color-dot {
                 min-width: 16px;
                 min-height: 16px;
                 padding: 0;
                 border-radius: 50%;
-                border: 2px solid rgba(255,255,255,0.15);
+                border: 2px solid rgba(255,255,255,0.25);
             }
             .color-dot:hover {
-                border-color: rgba(255,255,255,0.4);
+                border-color: rgba(255,255,255,0.5);
             }
             .lw-btn {
                 min-width: 24px;
                 min-height: 24px;
-                font-size: 11px;
-                opacity: 0.7;
+                font-size: 12px;
+                opacity: 0.75;
+                color: #d0d0d8;
             }
             .lw-btn:hover {
                 opacity: 1;
             }
             .snip-zoom {
-                color: #666;
+                color: #a0a0ab;
                 font-size: 12px;
                 min-width: 40px;
             }
             .snip-action {
-                color: #2e7d32;
+                color: #54c08a;
             }
             .snip-close {
-                color: #c62828;
+                color: #ff7070;
             }
             .snip-sep {
-                background: rgba(0,0,0,0.1);
+                background: rgba(255,255,255,0.12);
                 min-width: 1px;
-                margin: 4px 3px;
+                margin: 5px 3px;
             }
         """)
         Gtk.StyleContext.add_provider_for_screen(
@@ -171,11 +178,17 @@ class PinWin(Gtk.Window):
         )
         bar.get_style_context().add_class("snip-bar")
 
-        def mkbtn(icon_name, tip, cb, css_class=None):
+        # 动态尺寸（缩放时更新）独立 provider，避免覆盖上面的主题样式
+        self._bar_size_css = Gtk.CssProvider()
+        bar.get_style_context().add_provider(
+            self._bar_size_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2
+        )
+
+        def mkbtn(icon_name, tip, cb, css_class=None, color=None):
             b = Gtk.Button()
             b.set_tooltip_text(tip)
             b.set_relief(Gtk.ReliefStyle.NONE)
-            img = load_icon_as_image(icon_name, 16)
+            img = load_icon_as_image(icon_name, 16, color)
             if img:
                 b.set_image(img)
             else:
@@ -198,7 +211,8 @@ class PinWin(Gtk.Window):
         for icon, tid, tip in [("move", "move", "移动"), ("pen", "pen", "画笔"),
                                  ("rect", "rect", "矩形"), ("arrow", "arrow", "箭头"),
                                  ("line", "line", "直线"), ("text", "text", "文字")]:
-            b = mkbtn(icon, tip, lambda _, t=tid: self._settool(t))
+            b = mkbtn(icon, tip, lambda _, t=tid: self._settool(t),
+                      color=(0.92, 0.92, 0.95))
             self._tool_btns[tid] = b
             # 存储原始图标
             img = b.get_image()
@@ -242,17 +256,17 @@ class PinWin(Gtk.Window):
         bar.pack_start(sep(), False, False, 0)
 
         # ── 操作按钮 ──
-        bar.pack_start(mkbtn("undo", "撤销", lambda _: self._undo()), False, False, 0)
-        bar.pack_start(mkbtn("clear", "清除", lambda _: self._clear_anns()), False, False, 0)
-        bar.pack_start(mkbtn("zoom-out", "缩小", lambda _: self._zoom(-1)), False, False, 0)
+        bar.pack_start(mkbtn("undo", "撤销", lambda _: self._undo(), color=(0.92, 0.92, 0.95)), False, False, 0)
+        bar.pack_start(mkbtn("clear", "清除", lambda _: self._clear_anns(), color=(0.92, 0.92, 0.95)), False, False, 0)
+        bar.pack_start(mkbtn("zoom-out", "缩小", lambda _: self._zoom(-1), color=(0.92, 0.92, 0.95)), False, False, 0)
         self.zlbl = Gtk.Label(label="100%")
         self.zlbl.get_style_context().add_class("snip-zoom")
         bar.pack_start(self.zlbl, False, False, 0)
-        bar.pack_start(mkbtn("zoom-in", "放大", lambda _: self._zoom(1)), False, False, 0)
+        bar.pack_start(mkbtn("zoom-in", "放大", lambda _: self._zoom(1), color=(0.92, 0.92, 0.95)), False, False, 0)
 
         bar.pack_start(sep(), False, False, 0)
-        bar.pack_start(mkbtn("copy", "复制到剪贴板", self._copy, "snip-action"), False, False, 0)
-        bar.pack_end(mkbtn("close", "关闭", lambda _: self.close(), "snip-close"), False, False, 0)
+        bar.pack_start(mkbtn("copy", "复制到剪贴板", self._copy, "snip-action", (0.36, 0.78, 0.55)), False, False, 0)
+        bar.pack_end(mkbtn("close", "关闭", lambda _: self.close(), "snip-close", (1.0, 0.46, 0.46)), False, False, 0)
 
         return bar
 
@@ -407,9 +421,9 @@ class PinWin(Gtk.Window):
         btn_size = int(26 * s)
         icon_size = int(16 * s)
 
-        if hasattr(self, '_bar_css'):
+        if hasattr(self, '_bar_size_css'):
             try:
-                self._bar_css.load_from_data(
+                self._bar_size_css.load_from_data(
                     f".snip-bar button {{ min-width: {btn_size}px; min-height: {btn_size}px; "
                     f"font-size: {font_size}px; padding: {int(3*s)}px {int(6*s)}px; }}".encode()
                 )
@@ -445,7 +459,20 @@ class PinWin(Gtk.Window):
         self.darea.set_size_request(self._disp_w, self._disp_h)
         self.darea.queue_draw()
         self.zlbl.set_label(f"{int(self.scale * 100)}%")
-        self.resize(self._disp_w, self._disp_h + 36)
+        # 用真实工具栏高度（而非硬编码 36），避免窗口尺寸与内容不符
+        try:
+            _, bar_h = self._bar.get_preferred_height()
+        except Exception:
+            bar_h = 40
+        self.resize(self._disp_w, self._disp_h + bar_h)
+
+    def _on_key(self, w, e):
+        """贴图窗口内的按键处理"""
+        k = Gdk.keyval_name(e.keyval)
+        if k == 'Escape':
+            self.close()
+            return True
+        return False
 
     def _on_scroll(self, w, e):
         if e.direction == Gdk.ScrollDirection.UP:
@@ -462,15 +489,8 @@ class PinWin(Gtk.Window):
         return True
 
     def _w2i(self, wx, wy):
-        """控件坐标 → 原图坐标"""
-        alloc = self.darea.get_allocation()
-        aw, ah = alloc.width, alloc.height
-        if aw <= 0 or ah <= 0:
-            aw, ah = self._disp_w, self._disp_h
-        return (
-            wx * self.orig.get_width() / max(1, aw),
-            wy * self.orig.get_height() / max(1, ah),
-        )
+        """控件坐标 → 原图坐标（与 _on_draw 用同一个 scale 变换，保证画笔对准光标）"""
+        return (wx / self.scale, wy / self.scale)
 
     def _on_press(self, w, e):
         if e.button != 1:
@@ -536,27 +556,25 @@ class PinWin(Gtk.Window):
         return True
 
     def _on_draw(self, w, cr):
-        """DrawingArea 绘制：原图 + 标注"""
-        # 绘制原图
-        pb = self.orig.scale_simple(self._disp_w, self._disp_h,
-                                    GdkPixbuf.InterpType.BILINEAR)
-        Gdk.cairo_set_source_pixbuf(cr, pb, 0, 0)
+        """DrawingArea 绘制：原图 + 标注（统一 scale 变换，杜绝坐标偏移）"""
+        cr.save()
+        cr.scale(self.scale, self.scale)
+        # 原图（直接用原分辨率，由 cairo 变换缩放）
+        Gdk.cairo_set_source_pixbuf(cr, self.orig, 0, 0)
         cr.paint()
-        # 绘制标注 surface（已有标注 + 当前绘制）
+        # 标注（临时预览优先）
         if self._temp_surface:
-            # 有临时预览（正在绘制中）
-            cr.save()
-            cr.scale(self.scale, self.scale)
             cr.set_source_surface(self._temp_surface, 0, 0)
             cr.paint()
-            cr.restore()
         elif self.anns:
-            # 有已完成的标注
-            cr.save()
-            cr.scale(self.scale, self.scale)
             cr.set_source_surface(self._ann_surface, 0, 0)
             cr.paint()
-            cr.restore()
+        cr.restore()
+        # 一圈细描边，让贴图像一张“卡片”
+        cr.set_source_rgba(1, 1, 1, 0.18)
+        cr.set_line_width(1)
+        cr.rectangle(0.5, 0.5, self._disp_w - 1, self._disp_h - 1)
+        cr.stroke()
         return True
 
     # ── 标注绘制 ──
