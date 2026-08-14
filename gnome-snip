@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """gnome-snip — GNOME Wayland 截图 + 贴图 + 标注工具"""
 import signal
 import sys
