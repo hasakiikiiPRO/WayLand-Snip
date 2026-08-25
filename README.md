@@ -13,7 +13,8 @@ GNOME Wayland 原生截图 + 贴图 + 标注工具。
 - ✏️ **标注** — 画笔、矩形、箭头、直线、文字
 - 🎨 **颜色** — 8 种预设颜色 + 自定义调色盘
 - 📏 **线粗** — 5 档线宽可选
-- 📋 **剪贴板** — 截图自动复制到剪贴板，含标注复制
+- 📋 **剪贴板** — 截图自动复制到剪贴板，含标注复制；贴图窗口内 `Ctrl+C` 直接复制
+- 🔠 **OCR 文字识别** — 弹出右侧结果面板，可拖选部分文字复制，也可一键全部复制（tesseract，默认中英混合）
 - 🖥️ **系统托盘** — 最小化到托盘，右键菜单操作
 - ⚙️ **设置** — 可配置快捷键、截图行为、标注默认值、开机启动
 - 🔄 **多次截图** — 一个实例内可多次截图，不会重复启动
@@ -35,17 +36,27 @@ GNOME Wayland 原生截图 + 贴图 + 标注工具。
 - Snipaste 风格**深色工具栏**，图标单色重染为浅色（`icons.py` 新增 `color` 参数）。
 - 修复缩放后工具栏样式丢失的 bug（CSS 尺寸与主题拆分两个 provider，避免互相覆盖）。
 
+### 新功能：Ctrl+C 复制 + OCR（`pinwin.py` + `ocrwin.py` + `icons/ocr.svg`）
+- **Ctrl+C 直接复制**：贴图窗口内按 `Ctrl+C` 即复制当前图（含标注）到剪贴板，并自动退出贴图（工具栏 📋 按钮行为一致）。
+- **OCR 文字识别**：工具栏 ⛶ 按钮或 `Ctrl+Shift+O`。tesseract 后台线程识别（UI 不卡顿），完成后在**贴图右侧弹出结果面板**：文字可自由拖选，「复制选中」只复制高亮部分，「复制全部」一键全复制，**复制成功后面板自动关闭**；面板右侧放不下自动换左侧。
+- **OCR 识别率优化**：送入 tesseract 前按图像尺寸自动放大 1–3 倍（实测小字号截图命中率 9/16 → 12/16）。
+- **修复文字标注中文变豆腐块**：标注含中文时自动选用 CJK 字体（fc-list 探测）。
+
 ## 📦 依赖
 
 - 系统 Python 3.8+（Ubuntu 24.04 为 3.12）
 - GTK 3 + PyCairo
 - xdg-desktop-portal + xdg-desktop-portal-gnome
 - AyatanaAppIndicator3（托盘支持，可选）
+- tesseract-ocr + 中文语言包（OCR 功能，可选）
 
 ```bash
 # Ubuntu/Debian
 sudo apt install python3-gi python3-cairo gir1.2-gtk-3.0 \
     xdg-desktop-portal-gnome gir1.2-ayatanaappindicator3-0.1
+
+# OCR 支持（可选）
+sudo apt install tesseract-ocr tesseract-ocr-chi-sim
 ```
 
 ## 🚀 安装
@@ -83,6 +94,8 @@ sudo cp gnome-snip.desktop /usr/share/applications/
 |--------|------|
 | F1 | 截图并贴屏（可在设置中自定义） |
 | Esc | 关闭当前贴图 |
+| Ctrl+C | 复制当前图（含标注）并退出贴图 |
+| Ctrl+Shift+O | OCR 识别并弹出结果面板（贴图窗口内） |
 
 ### 底部工具栏
 
@@ -99,7 +112,8 @@ sudo cp gnome-snip.desktop /usr/share/applications/
 | ↩ | 撤销上一步 |
 | ⌫ | 清除所有标注 |
 | −/+ | 缩放 |
-| 📋 | 复制到剪贴板（含标注） |
+| ⛶ | OCR 识别文字，弹出结果面板（需 tesseract） |
+| 📋 | 复制到剪贴板（含标注）并退出贴图（同 Ctrl+C） |
 | ❌ | 关闭贴图 |
 
 ### 贴图操作
@@ -123,6 +137,7 @@ sudo cp gnome-snip.desktop /usr/share/applications/
 
 - **快捷键**：自定义截图快捷键（GNOME 级别全局快捷键）
 - **截图行为**：自动复制到剪贴板、自动贴屏、保存目录、最大贴图数
+- **OCR**：识别语言 `ocr_langs`（编辑配置文件，默认 `chi_sim+eng`）
 - **标注默认值**：初始缩放比例、默认线宽、默认工具
 - **系统**：开机自动启动
 
@@ -143,6 +158,7 @@ wayland-snip/
     ├── app.py              # 主应用（托盘、快捷键、截图调度）
     ├── portal.py           # xdg-desktop-portal 截图接口
     ├── pinwin.py           # 贴图窗口（标注、缩放、拖拽）
+    ├── ocrwin.py           # OCR 结果面板（可选中复制）
     ├── settings.py         # 设置管理 + 快捷键/开机启动
     ├── prefs.py            # 设置界面
     ├── tray.py             # 系统托盘图标

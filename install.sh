@@ -50,6 +50,14 @@ else
     sudo apt install -y gir1.2-ayatanaappindicator3-0.1 2>/dev/null || true
 fi
 
+# OCR（可选）：tesseract + 中文语言包
+if command -v tesseract >/dev/null 2>&1; then
+    echo "  已检测到 tesseract（OCR 可用）"
+else
+    echo "  提示: 未安装 tesseract，OCR 功能不可用（可选）"
+    echo "        安装: sudo apt install tesseract-ocr tesseract-ocr-chi-sim"
+fi
+
 # 安装程序
 echo "安装 gnome-snip..."
 sudo mkdir -p "$PKG_DIR"
@@ -63,7 +71,7 @@ echo "✓ 已安装到 $INSTALL_DIR/gnome-snip"
 
 # 安装 .desktop 文件（出现在 Ubuntu 应用列表中）
 echo "注册应用..."
-sudo cp "$SCRIPT_DIR/gnome-snip.desktop" /usr/share/applications/gnome-snip.desktop
+sudo cp "$SCRIPT_DIR/wayland-snip.desktop" /usr/share/applications/gnome-snip.desktop
 sudo chmod +x /usr/share/applications/gnome-snip.desktop
 echo "✓ 已添加到应用列表"
 
