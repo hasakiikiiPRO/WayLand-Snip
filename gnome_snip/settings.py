@@ -17,6 +17,7 @@ DEFAULTS = {
     "default_tool": "move",
     "default_color": [1, 0, 0],
     "default_line_width": 3,
+    "ocr_langs": "chi_sim+eng",
     "hotkey": "F1",
     "autostart": False,
 }
